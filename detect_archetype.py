@@ -1,5 +1,6 @@
 import os
 import random
+import redis
 
 import nltk
 from nltk.util import ngrams
@@ -42,7 +43,12 @@ class DeckClassifierAPI(Resource):
         # deck = request.form['deck']
         # x = self.deck_to_vector([deck])
         x = self.get_placeholder_deck()
-        label = self.classifier.dbscan_predict(x, 'Warrior')
+        klass = 'Warrior')
+        label = self.classifier.dbscan_predict(x, klass)
+
+	prediction['name'] = label
+	prediction['player_class'] = klass
+
         return label, 201
 
 
@@ -58,8 +64,12 @@ class DeckClassifier(object):
         self.cluster_names = {}
 
         DATA_FILE = "100kdecks.pkl"
+        REDIS_ADDR = "localhost"
+        REDIS_PORT = 6379
+        REDIS_DB = 0
         eps = 6  # int(sys.argv[1])
         min_samples = 10  # int(sys.argv[2])
+        self.redis_db = redis.StrictRedis(host=REDIS_ADDR, port=REDIS_PORT, db=REDIS_DB)
         self.maybe_train_classifier(DATA_FILE, eps, min_samples)
 
     def run(self):
@@ -117,16 +127,20 @@ class DeckClassifier(object):
                 decks.append(self.deck_names[klass][i])
         return decks
 
-
     def maybe_train_classifier(self, data_file, eps, min_samples):
         try:
-            raise IOError()
-            with open(self.CLASSIFIER_CACHE, 'rb') as d:
-                state_tuple = pickle.load(d)
-                klass_classifier, self.dimension_to_card_name,\
-                self.deck_names, self.pca, self.cluster_names = state_tuple
+            if self.redis_db:
+                self.klass_classifiers = self.redis_db.get('klass_classifier')
+                self.dimension_to_card_name = self.redis_db.get('dimension_to_card_name')
+                self.deck_names = self.redis_db.get('deck_names')
+                self.pca = self.redis_db.get('pca')
+                self.cluster_names = self.redis_db.get('cluster_names')
+            else:
+                with open(self.CLASSIFIER_CACHE, 'rb') as d:
+                    state_tuple = pickle.load(d)
+                    klass_classifier, self.dimension_to_card_name,\
+                    self.deck_names, self.pca, self.cluster_names = state_tuple
         except IOError:
-
             klass_classifier = {}
             data, self.deck_names = self.load_data_from_file(data_file)
 
@@ -164,6 +178,8 @@ class DeckClassifier(object):
             if distance(x_new, x_core.reshape(1, -1)) < eps:
                 prediction = labels[core_samples_indexes[index]]
                 break
+            	id = models.BigAutoField(primary_key=True)
+
         return self.cluster_names[prediction]
 
     def print_data(self, deck_names, clusters):
@@ -177,6 +193,14 @@ class DeckClassifier(object):
         for group in sorted(groups, key=len):
             print(len(group), group, "\n")
         print("found {} clusters".format(len(set(clusters))))
+
+    def test_accuracy(self, classifier, test_data, test_labels):
+        hits = 0
+        for (deck, klass, target_label) in zip(test_data, test_labels):
+            label = self.dbscan_predict(deck, klass)
+            if label == target_label:
+                hits += 1
+        return float(hits)/len(test_data)
 
     def name_clusters(self, classifier, deck_names, klass):
         labels = classifier.labels_
@@ -211,14 +235,28 @@ class DeckClassifier(object):
                 cluster_name += " || " + "|".join([dn[0] for dn in fdist.most_common(3)])
                 """
 
-                keywords = fdist.most_common(5)
-                cluster_name = keywords[0][0]
-                cutoff = 0.5 * keywords[0][1]
-                for dn in keywords[1:]:
-                    if dn[1] > cutoff:
+                keywords = fdist.most_common(10)
+                cluster_name = ""
+                naming_cutoff = 0.5 * keywords[0][1]
+                race_cutoff = 0.1 * keywords[0][1]
+                category_cutoff = 0.1 * keywords[0][1]
+
+                categories = ['aggro', 'combo', 'control', 'fatigue', 'midrange', 'ramp', 'tempo', 'token']
+                pCategories = {}
+                for cat in categories:
+                    pCategories[cat] = fdist[cat]/len(deck_names)
+
+                for dn in keywords:
+                    if dn[1] > naming_cutoff:
                         cluster_name += " " + dn[0]
 
-            cluster_names[cluster_index] = cluster_name
+                    if dn[1] > race_cutoff and dn[1] in races:
+                        cluster_race += " " + dn[0]
+
+
+            cluster_names[cluster_index] = cluster_name.ltrim()
+            cluster_categories[cluster_index] = cluster_category.ltrim()
+            cluster_categories[cluster_index] = cluster_category.ltrim()
         return cluster_names
 
 
