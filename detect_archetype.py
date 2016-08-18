@@ -1,13 +1,11 @@
-import os
-import random
-import redis
-import seaborn as sns
+
 
 import nltk
 from nltk.util import ngrams
 from nltk import FreqDist
 import pprint
 import matplotlib.pyplot as plt
+from hearthstone import cardxml
 
 import numpy as np
 import sklearn
@@ -80,9 +78,10 @@ class DeckClassifier(object):
         app_api.add_resource(classifier_api, "/")  # "/api/v0.1/detect_archetype")
 
         self.test_labels = []
+        self.card_db, _ = cardxml.load()
         self.cluster_names = {}
         self.deck_names = {}
-        self.pca = None
+        self.pca = {}
         self.klass_classifiers = {}
         self.dimension_to_card_name = {}
 
@@ -90,10 +89,12 @@ class DeckClassifier(object):
         REDIS_ADDR = "localhost"
         REDIS_PORT = 6379
         REDIS_DB = 0
-        eps = 2 * 2  # int(sys.argv[1])
-        min_samples = 15 # int(sys.argv[1])
+        eps = int(sys.argv[1])
+        min_samples = int(sys.argv[2])
+        cluster_size = 10  # int(sys.argv[1])
+        print(min_samples, cluster_size, end=" ")
         self.redis_db = None  # redis.StrictRedis(host=REDIS_ADDR, port=REDIS_PORT, db=REDIS_DB)
-        self.maybe_train_classifier(DATA_FILE, eps, min_samples)
+        self.maybe_train_classifier(DATA_FILE, eps, min_samples, cluster_size)
 
     def run(self):
         # self.app.run()
@@ -113,18 +114,37 @@ class DeckClassifier(object):
                     decks[c].append(d)
             except EOFError:
                 pass
-        return decks, deck_names
+        return decks, dict(deck_names)
+
+    def test_accuracy(self, test_data, test_labels, klass):
+        hits = 0
+        unknowns = 0
+        for (deck, target_label) in zip(test_data, test_labels):
+            label = self.dbscan_predict(deck, klass)
+            label = self.cluster_names[klass][label[0]]
+            if target_label in label:
+                hits += 1
+            else:
+                if label == "UNKNOWN":
+                    unknowns += 1
+                else:
+                    print("predicted [", label, "] was [", target_label, end=' ]\t')
+                    for cluster_index, prob in zip(self.klass_classifiers[klass].classes_,
+                                                   self.dbscan_explain(deck, klass)[0]):
+                        prob = int(prob * 100)
+                        if prob != 0:
+                            pass
+                            # print(self.cluster_names[klass][cluster_index], prob, "%", end="; ")
+                    print("")
+        # print("predicted UNKNOWN", unknowns, "times")
+        return float(hits) / len(test_data)
 
     def plot_data(self, data, db, cluster_names):
         # notes = []
         plt.axis("equal")
         model = TSNE(n_components=2, random_state=0)
 
-        # core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
-        # core_samples_mask[db.core_sample_indices_] = True
-        # n_clusters_ = len(set(db.labels_)) - (1 if -1 in db.labels_ else 0)
-
-        data = self.pca.transform(data[:1000])
+        data = self.pca[klass].transform(data[:1000])
         embed = model.fit_transform(data)
 
         uniq_labels = set(db.labels_)
@@ -194,24 +214,42 @@ class DeckClassifier(object):
 
         return data, deck_names
 
-    def train_classifier(self, data, eps, min_samples):
-        self.pca = PCA(n_components=50)
-        data = self.pca.fit_transform(data)
+    def train_classifier(self, data, eps, min_samples, cluster_size):
+        transform = PCA(n_components=15)
+        data = transform.fit_transform(data)
+        # for eig, var in zip(transform.components_, transform.explained_variance_ratio_):
+        #     print(var)
+        #     for i, card_proj in enumerate(eig):
+        #         if abs(card_proj) > 0.05:
+        #             print("\t", self.card_db[self.dimension_to_card_name['Warrior'][i]], abs(int(card_proj*100)))
 
-        # db_model = DBSCAN(eps=eps, min_samples=min_samples, metric="manhattan")
-        model = hdbscan.HDBSCAN(metric="manhattan", min_cluster_size=40, min_samples=min_samples)
-        model.fit(data)
-        return model
+        labels = self.label_data(data, cluster_size, min_samples, eps)
 
-    def get_decks_in_cluster(self, classifier, klass, cluster_index):
+        classifier = sklearn.svm.SVC(probability=True)
+
+        # noise_mask = np.zeros_like(model.labels_.reshape(-1, 1), dtype=bool)
+        # noise_mask[np.where(model.labels_ == -1)] = True
+
+        noise_mask = labels == -1
+        dims = data.shape[1]
+
+        X = data[~noise_mask].reshape(-1, dims)
+        Y = labels[~noise_mask]
+        classifier.fit(X, Y)
+
+        # information.mask = False
+        # labels.mask = False
+
+        return classifier, transform, labels
+
+    def get_decks_in_cluster(self, labels, klass, cluster_index):
         decks = []
-        clusters = classifier[klass].labels_
-        for i in range(len(clusters)):
-            if clusters[i] == cluster_index:
+        for i in range(len(labels)):
+            if labels[i] == cluster_index:
                 decks.append(self.deck_names[klass][i])
         return decks
 
-    def maybe_train_classifier(self, data_file, eps, min_samples):
+    def maybe_train_classifier(self, data_file, eps, min_samples, cluster_size):
         try:
             raise IOError()
             if self.redis_db:
@@ -227,19 +265,32 @@ class DeckClassifier(object):
                     self.deck_names, self.pca, self.cluster_names = state_tuple
         except IOError:
             loaded_data, self.deck_names = self.load_data_from_file(data_file)
-            data, test_data, self.test_labels = self.split_dataset(loaded_data)
+            data, test_data, test_labels = self.split_dataset(loaded_data)
 
             for klass in data:
-                self.klass_classifiers[klass] = self.train_classifier(data[klass], eps, min_samples)
+                self.klass_classifiers[klass], self.pca[klass], labels = self.train_classifier(data[klass], eps,
+                                                                                               min_samples,
+                                                                                               cluster_size)
 
             for klass in self.klass_classifiers:
-                self.cluster_names[klass], _, _ = self.name_clusters(self.klass_classifiers[klass],
-                                                                     self.deck_names[klass], klass)
+                self.cluster_names[klass], _, _ = self.name_clusters(self.deck_names[klass], klass, labels)
                 # self.plot_data(data[klass], self.klass_classifiers[klass], self.cluster_names[klass])
 
             print("train results:")
-            accuracy = self.test_accuracy(classifier, test_data, test_labels)
-            print(accuracy)
+            for klass, cluster_names in self.cluster_names.items():
+                print(klass, "clusters", len(cluster_names))
+                for cluster_index, cluster_name in cluster_names.items():
+                    decks = self.get_decks_in_cluster(labels, klass, cluster_index)
+                    print(cluster_name, len(decks))
+                    if cluster_name == "UNKNOWN":
+                        # print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
+                        print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), (float(len(decks)) / len(data[klass])) * 100))
+            print("test results:")
+            for klass in self.klass_classifiers:
+                accuracy = self.test_accuracy(test_data[klass], test_labels[klass], klass)
+                # print(int(accuracy * 100))
+                print("accuracy {:.2f}%".format(accuracy * 100))
+
             # for klass, cluster_names in self.cluster_names.items():
             #    print(klass, ":")
             #    for cluster_index, cluster_name in cluster_names.items():
@@ -253,32 +304,19 @@ class DeckClassifier(object):
 
     # consider the newest decks more important
     def dbscan_predict(self, x_new, klass, distance=sklearn.metrics.pairwise.manhattan_distances):
-        x_new = self.pca.transform(x_new)
-        # Find a core sample closer than EPS
-        core_components = self.klass_classifiers[klass].components_
-        eps = self.klass_classifiers[klass].eps
-        labels = self.klass_classifiers[klass].labels_
-        core_samples_indexes = self.klass_classifiers[klass].core_sample_indices_
-
-        prediction = -1
-        for index, x_core in enumerate(core_components):
-            if distance(x_new, x_core.reshape(1, -1)) < eps:
-                prediction = labels[core_samples_indexes[index]]
-                break
-
+        x_new = x_new.reshape(1, -1)
+        x_new = self.pca[klass].transform(x_new)
+        prediction = self.klass_classifiers[klass].predict(x_new)
         return prediction
 
-    def test_accuracy(self, classifier, test_data, test_labels):
-        hits = 0
-        for (deck, klass, target_label) in zip(test_data, test_labels):
-            label = self.dbscan_predict(deck, klass)
-            if label == target_label:
-                hits += 1
-        return float(hits) / len(test_data)
+    def dbscan_explain(self, x_new, klass, distance=sklearn.metrics.pairwise.manhattan_distances):
+        x_new = x_new.reshape(1, -1)
+        x_new = self.pca[klass].transform(x_new)
+        probs = self.klass_classifiers[klass].predict_proba(x_new)
+        return probs
 
     @staticmethod
-    def name_clusters(classifier, deck_names, klass):
-        labels = classifier.labels_
+    def name_clusters(deck_names, klass, labels):
         cluster_decknames = collections.defaultdict(list)
         cluster_names = {}
         cluster_races = {}
@@ -295,11 +333,11 @@ class DeckClassifier(object):
             else:
                 klass_ = klass.lower()
                 decknames = [n.lower().replace(klass_, "") for n in decknames if n.lower()]
-                stopwords = set(nltk.corpus.stopwords.words('english'))
+                # stopwords = set(nltk.corpus.stopwords.words('english'))
 
                 # Freq
                 tokenizer = nltk.RegexpTokenizer(r'\w+')
-                words = [word for name in decknames for word in tokenizer.tokenize(name) if word not in stopwords]
+                words = [word for name in decknames for word in tokenizer.tokenize(name)]  # if word not in stopwords]
                 fdist = FreqDist(words)
 
                 """
@@ -344,9 +382,9 @@ class DeckClassifier(object):
         for klass in loaded_data.keys():
             test_dataset[klass] = []
             test_labels[klass] = []
-            test_data_size = int(len(loaded_data[klass])*0.02)
+            test_data_size = int(len(loaded_data[klass]) * 0.02)
             while len(test_dataset[klass]) < test_data_size:
-                index = random.randint(0, len(loaded_data[klass]))
+                index = random.randint(0, len(loaded_data[klass]) - 1)
                 name = self.deck_names[klass][index].lower().replace(klass.lower(), "")
                 if name in known_archetypes[klass]:
                     test_dataset[klass].append(loaded_data[klass][index])
@@ -356,6 +394,15 @@ class DeckClassifier(object):
                     loaded_data[klass] = np.delete(loaded_data[klass], index, axis=0)
         return loaded_data, test_dataset, test_labels
 
+    def label_data(self, data, cluster_size, min_samples, eps):
+        model = DBSCAN(eps=eps, min_samples=min_samples, metric="manhattan")
+        # model = hdbscan.HDBSCAN(metric="manhattan", min_cluster_size=cluster_size, min_samples=min_samples)
+        model.fit(data)
+        model.labels_.reshape(-1, 1)
+        return model.labels_
+
 
 if __name__ == '__main__':
+    global DEBUG
+    DEBUG = True
     DeckClassifier().run()
