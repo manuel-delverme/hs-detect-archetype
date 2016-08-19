@@ -7,6 +7,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import nltk
 import numpy as np
+import multiprocessing
 import sklearn
 from flask import Flask
 from flask_restful import Resource, Api
@@ -76,10 +77,8 @@ class DeckClassifier(object):
         REDIS_ADDR = "localhost"
         REDIS_PORT = 6379
         REDIS_DB = 0
-        eps = int(sys.argv[1])
+        eps = float(sys.argv[1])
         min_samples = int(sys.argv[2])
-        # cluster_size = 10  # int(sys.argv[1])
-        # print(min_samples, cluster_size, end=" ")
         self.redis_db = None  # redis.StrictRedis(host=REDIS_ADDR, port=REDIS_PORT, db=REDIS_DB)
         self.maybe_train_classifier(DATA_FILE, eps, min_samples)
 
@@ -122,7 +121,7 @@ class DeckClassifier(object):
                         if prob != 0:
                             pass
                             # print(self.cluster_names[klass][cluster_index], prob, "%", end="; ")
-                    # print("")
+                            # print("")
         # print("predicted UNKNOWN", unknowns, "times")
         return float(hits) / len(test_data)
 
@@ -148,16 +147,11 @@ class DeckClassifier(object):
 
         return data, deck_names
 
-    def train_classifier(self, data, eps, min_samples):
+    @staticmethod
+    def train_classifier(data, eps, min_samples):
         transform = PCA(n_components=15)
         data = transform.fit_transform(data)
-        # for eig, var in zip(transform.components_, transform.explained_variance_ratio_):
-        #     print(var)
-        #     for i, card_proj in enumerate(eig):
-        #         if abs(card_proj) > 0.05:
-        #             print("\t", self.card_db[self.dimension_to_card_name['Warrior'][i]], abs(int(card_proj*100)))
-
-        labels = self.label_data(data, min_samples, eps)
+        labels = DeckClassifier.label_data(data, min_samples, eps)
 
         classifier = sklearn.svm.SVC(probability=True)
 
@@ -194,17 +188,21 @@ class DeckClassifier(object):
         except IOError:
             loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
             data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
-
             labels = {}
-            for klass in data:
-                self.klass_classifiers[klass], self.pca[klass], labels[klass] = self.train_classifier(data[klass],
-                                                                                               eps, min_samples)
 
-            for klass in self.klass_classifiers:
-                self.cluster_names[klass], _, _ = self.name_clusters(deck_names[klass], klass, labels[klass])
-                # self.plot_data(data[klass], self.klass_classifiers[klass], self.cluster_names[klass])
+            pool = multiprocessing.Pool(5)
+            parameters = []
+            for klass in data.keys():
+                parameters.append((data[klass], eps, min_samples, deck_names[klass], klass))
+            results = pool.map(DeckClassifier.train_class, parameters)
+
+            for result in results:
+                classifier, pca, cluster_names, klass, klass_labels = result
+                self.klass_classifiers[klass], self.pca[klass], self.cluster_names[klass], labels[klass] \
+                    = classifier, pca, cluster_names, klass_labels
 
             print("train results:")
+            mean_unknown_ratio = 0
             for klass, cluster_names in self.cluster_names.items():
                 print(klass, "clusters", len(cluster_names), end="{")
                 for cluster_index, cluster_name in cluster_names.items():
@@ -212,20 +210,33 @@ class DeckClassifier(object):
                     if cluster_name == "UNKNOWN":
                         # print(int((float(len(decks)) / len(data[klass])) * 100), end=" ")
                         print("}")
-                        print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks),
-                                                         (float(len(decks)) / len(data[klass])) * 100))
-
+                        unknown_ratio = (float(len(decks)) / len(data[klass])) * 100
+                        mean_unknown_ratio += unknown_ratio / len(self.cluster_names)
+                        print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), unknown_ratio))
                     else:
                         print(cluster_name, len(decks), end=", ")
+
             print("test results:")
+            mean_accuracy = 0
             for klass in self.klass_classifiers:
                 accuracy = self.test_accuracy(test_data[klass], test_labels[klass], klass)
+                mean_accuracy += accuracy/len(self.klass_classifiers)
                 # print(int(accuracy * 100))
                 print(klass, "accuracy {:.2f}%".format(accuracy * 100))
+
+            print("mean accuracy {:.2f}%".format(mean_accuracy * 100))
+            print("mean unknown ratio {:.2f}%".format(mean_unknown_ratio))
 
             with open(self.CLASSIFIER_CACHE, 'wb') as d:
                 state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names)
                 pickle.dump(state_tuple, d)
+
+    @staticmethod
+    def train_class(params):
+        data, eps, min_samples, deck_names, klass = params
+        klass_classifier, pca, labels = DeckClassifier.train_classifier(data, eps, min_samples)
+        cluster_names, _, _ = DeckClassifier.name_clusters(deck_names, klass, labels)
+        return klass_classifier, pca, cluster_names, klass, labels
 
     # consider the newest decks more important
     def dbscan_predict(self, x_new, klass):
