@@ -1,21 +1,21 @@
 import collections
+import json
 import pickle
 import random
 import sys
 
-import seaborn as sns
-import matplotlib.pyplot as plt
 import nltk
 import numpy as np
 import multiprocessing
 import sklearn
 from flask import Flask
 from flask_restful import Resource, Api
+from flask import request
+
 from hearthstone import cardxml
 from nltk import FreqDist
 from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 
 
 class DeckClassifierAPI(Resource):
@@ -32,16 +32,18 @@ class DeckClassifierAPI(Resource):
         return x.reshape(1, -1)
 
     def post(self):
-        # deck = request.form['deck']
-        # x = self.deck_to_vector([deck])
-        x = self.get_placeholder_deck()
-        klass = 'Warrior'
-        index = self.classifier.dbscan_predict(x, klass)
-        name = self.classifier.cluster_names[index]
-        races = self.classifier.cluster_races[index]
-        categories = self.classifier.cluster_categories[index]
+        deck = json.loads(request.form['deck'])
+        klass = request.form['klass']
 
-        return name, races, categories, 201
+        lookup = self.classifier.dimension_to_card_name
+        x = self.classifier.deck_to_vector([deck], lookup[klass])
+
+        index = int(self.classifier.dbscan_predict(x, klass))
+        name = self.classifier.cluster_names[klass][index]
+        # races = self.classifier.cluster_races[klass][index]
+        # categories = self.classifier.cluster_categories[klass][index]
+
+        return name, 201
 
 
 def print_data(deck_names, clusters):
@@ -83,8 +85,7 @@ class DeckClassifier(object):
         self.maybe_train_classifier(DATA_FILE, eps, min_samples)
 
     def run(self):
-        # self.app.run()
-        pass
+        self.app.run()
 
     @staticmethod
     def load_decks_from_file(file_name):
@@ -130,8 +131,14 @@ class DeckClassifier(object):
         for deck in decks:
             datapoint = np.zeros(len(dimension_to_card_name))
             for card in deck:
-                card_dimension = dimension_to_card_name.index(card)
-                datapoint[card_dimension] = deck[card]
+                try:
+                    card_dimension = dimension_to_card_name.index(card)
+                except ValueError:
+                    continue
+                if isinstance(card, str):
+                    datapoint[card_dimension] += 1
+                else:
+                    datapoint[card_dimension] = deck[card]
             klass_data.append(datapoint)
         data = np.array(klass_data)
         return data
@@ -174,7 +181,6 @@ class DeckClassifier(object):
 
     def maybe_train_classifier(self, data_file, eps, min_samples):
         try:
-            raise IOError()
             if self.redis_db:
                 self.klass_classifiers = self.redis_db.get('klass_classifier')
                 self.dimension_to_card_name = self.redis_db.get('dimension_to_card_name')
@@ -188,6 +194,8 @@ class DeckClassifier(object):
         except IOError:
             loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
             data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
+            del loaded_data
+            del loaded_deck_names
             labels = {}
 
             pool = multiprocessing.Pool(5)
@@ -215,6 +223,7 @@ class DeckClassifier(object):
                         print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), unknown_ratio))
                     else:
                         print(cluster_name, len(decks), end=", ")
+                        # canonical_deck = self.get_canonical_deck(data[klass], labels[klass])
 
             print("test results:")
             mean_accuracy = 0
@@ -358,6 +367,10 @@ class DeckClassifier(object):
         model.fit(data)
         model.labels_.reshape(-1, 1)
         return model.labels_
+
+    def get_canonical_deck(self, labels,):
+        avg_deck = np.average(decks)
+        return avg_deck
 
 
 if __name__ == '__main__':
