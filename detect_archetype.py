@@ -77,7 +77,7 @@ class DeckClassifier(object):
         self.dimension_to_card_name = {}
         self.canonical_decks = {}
 
-        DATA_FILE = "100kdecks.pkl"
+        DATA_FILE = "all_decks.pkl"
         REDIS_ADDR = "localhost"
         REDIS_PORT = 6379
         REDIS_DB = 0
@@ -87,7 +87,7 @@ class DeckClassifier(object):
         self.maybe_train_classifier(DATA_FILE, eps, min_samples)
 
     def run(self):
-        self.app.run()
+        self.app.run(host="0.0.0.0", port=31337)
 
     @staticmethod
     def load_decks_from_file(file_name):
@@ -194,7 +194,7 @@ class DeckClassifier(object):
                     state_tuple = pickle.load(d)
                 self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks = state_tuple
 
-        except IOError:
+        except FileNotFoundError:
             loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
             data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
             del loaded_data
@@ -215,7 +215,7 @@ class DeckClassifier(object):
             print("train results:")
             mean_unknown_ratio = 0
             for klass, cluster_names in self.cluster_names.items():
-                print(klass, "clusters", len(cluster_names), end="{")
+                print(klass, "clusters", len(cluster_names), end='{')
                 for cluster_index, cluster_name in cluster_names.items():
                     decks = self.get_decks_in_cluster(labels[klass], cluster_index, deck_names[klass])
                     if cluster_name == "UNKNOWN":

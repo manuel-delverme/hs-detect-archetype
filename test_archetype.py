@@ -10,7 +10,7 @@ card_db, _ = cardxml.load()
 
 deck = random_draft(CardClass.WARRIOR)
 deck = sorted(deck)
-resp = requests.post('http://localhost:5000', data={'deck': json.dumps(deck), 'klass': "Warrior"})
+resp = requests.post('http://localhost:31337', data={'deck': json.dumps(deck), 'klass': "Warrior"})
 name, canon_deck = json.loads(resp.text)
 print("name:", name)
 
