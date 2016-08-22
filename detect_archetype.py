@@ -42,8 +42,9 @@ class DeckClassifierAPI(Resource):
         name = self.classifier.cluster_names[klass][index]
         # races = self.classifier.cluster_races[klass][index]
         # categories = self.classifier.cluster_categories[klass][index]
+        canonical_deck = self.classifier.canonical_decks[klass][index]
 
-        return name, 201
+        return (name, canonical_deck), 201
 
 
 def print_data(deck_names, clusters):
@@ -74,6 +75,7 @@ class DeckClassifier(object):
         self.pca = {}
         self.klass_classifiers = {}
         self.dimension_to_card_name = {}
+        self.canonical_decks = {}
 
         DATA_FILE = "100kdecks.pkl"
         REDIS_ADDR = "localhost"
@@ -135,7 +137,7 @@ class DeckClassifier(object):
                     card_dimension = dimension_to_card_name.index(card)
                 except ValueError:
                     continue
-                if isinstance(card, str):
+                if isinstance(deck, list):
                     datapoint[card_dimension] += 1
                 else:
                     datapoint[card_dimension] = deck[card]
@@ -190,7 +192,8 @@ class DeckClassifier(object):
             else:
                 with open(self.CLASSIFIER_CACHE, 'rb') as d:
                     state_tuple = pickle.load(d)
-                    self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names = state_tuple
+                self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names, self.canonical_decks = state_tuple
+
         except IOError:
             loaded_data, loaded_deck_names = self.load_data_from_file(data_file)
             data, deck_names, test_data, test_labels = self.split_dataset(loaded_data, loaded_deck_names)
@@ -223,13 +226,15 @@ class DeckClassifier(object):
                         print("\t{}[{}, {:.0f}%]".format(cluster_name, len(decks), unknown_ratio))
                     else:
                         print(cluster_name, len(decks), end=", ")
-                        # canonical_deck = self.get_canonical_deck(data[klass], labels[klass])
+                        self.canonical_decks[klass] = self.get_canonical_decks(data[klass], self.pca[klass],
+                                                                               labels[klass],
+                                                                               self.dimension_to_card_name[klass])
 
             print("test results:")
             mean_accuracy = 0
             for klass in self.klass_classifiers:
                 accuracy = self.test_accuracy(test_data[klass], test_labels[klass], klass)
-                mean_accuracy += accuracy/len(self.klass_classifiers)
+                mean_accuracy += accuracy / len(self.klass_classifiers)
                 # print(int(accuracy * 100))
                 print(klass, "accuracy {:.2f}%".format(accuracy * 100))
 
@@ -237,7 +242,8 @@ class DeckClassifier(object):
             print("mean unknown ratio {:.2f}%".format(mean_unknown_ratio))
 
             with open(self.CLASSIFIER_CACHE, 'wb') as d:
-                state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca, self.cluster_names)
+                state_tuple = (self.klass_classifiers, self.dimension_to_card_name, self.pca,
+                               self.cluster_names, self.canonical_decks)
                 pickle.dump(state_tuple, d)
 
     @staticmethod
@@ -368,9 +374,24 @@ class DeckClassifier(object):
         model.labels_.reshape(-1, 1)
         return model.labels_
 
-    def get_canonical_deck(self, labels,):
-        avg_deck = np.average(decks)
-        return avg_deck
+    def get_canonical_decks(self, data, transform, labels, lookup):
+        data = transform.transform(data)
+        canonical_decks = {}
+        mask = np.ones_like(labels, dtype=bool)
+        for label in set(labels):
+            mask = labels == label
+            centroid = np.average(data[mask], axis=0)
+            avg_deck = transform.inverse_transform(centroid)
+            card_indexes = reversed(avg_deck.argsort()[-30:])
+            canonical_deck = []
+            for index in card_indexes:
+                if len(canonical_decks) <= 30:
+                    n_cards = avg_deck[index]
+                    n_cards = min(2, int(np.round(n_cards)))
+                    for i in range(n_cards):
+                        canonical_deck.append(lookup[index])
+            canonical_decks[label] = canonical_deck
+        return canonical_decks
 
 
 if __name__ == '__main__':
