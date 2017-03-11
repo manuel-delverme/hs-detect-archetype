@@ -158,9 +158,8 @@ class DeckClassifier(object):
 			a list of cards (archetype), confidence scores for the various class archetypes
 
 		"""
-		x = self.deck_to_1hot_vector([deck], klass, self.classifier_state['vectorizer'][klass])
-		classifier = self.classifier_state['classifier'][klass]
-		confidence = classifier.predict(x)
+		x = self.classifier_state['vectorizer'].transform(klass, [deck])
+		confidence = self.classifier_state['classifier'][klass].predict(x)
 		index = confidence.argmax()
 		canonical_deck = self.classifier_state['canonical_decks'][klass][index]
 		return canonical_deck, confidence
