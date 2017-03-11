@@ -504,7 +504,7 @@ class DeckClassifier(object):
 
 def main():
 	classifier = DeckClassifier()
-	classifier.load_state_from_file("/tmp/kara_classifier_state")
+	classifier.load_state_from_file("models/kara_classifier_state")
 	classifier.calculate_canonical_decks()
 	return
 
