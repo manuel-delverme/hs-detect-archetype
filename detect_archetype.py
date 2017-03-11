@@ -407,6 +407,7 @@ class DeckClassifier(object):
                     if arch['value'] == max_val:
                         print("topic {}:".format(idx))
                         print(arch['report'])
+                        canonical_decks[klass][idx].append(arch['report'])
                         del archetype_data[klass][idx]
                         break
 
