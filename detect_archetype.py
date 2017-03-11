@@ -164,7 +164,7 @@ class DeckClassifier(object):
             pArchetype_Card = archetype_classifier.components_
         except AttributeError:
             pArchetype_Card = archetype_classifier["components_"]
-        confidence = np.dot(pArchetype_Card, x)
+        confidence = np.dot(pArchetype_Card, x.transpose())
 
         index = confidence.argmax()
         canonical_deck = self.classifier_state['canonical_decks'][klass][index]
