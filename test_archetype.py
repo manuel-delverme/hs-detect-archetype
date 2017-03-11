@@ -10,29 +10,34 @@ card_db, _ = cardxml.load()
 
 deck = random_draft(CardClass.WARRIOR)
 deck = sorted(deck)
-resp = requests.post('http://tuamadre.net:31337', data={'deck': json.dumps(deck), 'klass': "Warrior"})
-name, canon_deck = json.loads(resp.text)
-print("name:", name)
+print("sending", deck)
+resp = requests.post('http://88.99.185.31:31337', data={'deck': json.dumps(deck), 'klass': "Warrior"})
+deck, probs = json.loads(resp.text)
 
-matches = []
-only_canon = []
-only_deck = []
-for card in canon_deck:
-    if card in deck:
-        deck.remove(card)
-        matches.append(card)
-    else:
-        only_canon.append(card)
-only_deck = deck
+print("confidences", probs)
+print("canonical deck:")
+for row in deck: print(row)
 
-print("\tmatches:")
-for card in matches:
-    print("\t", card_db[card])
 
-print("only in canon:")
-for card in only_canon:
-    print(card_db[card])
-
-print("\t\tonly in my deck:")
-for card in only_deck:
-    print("\t\t", card_db[card])
+# matches = []
+# only_canon = []
+# only_deck = []
+# for card in canon_deck:
+#     if card in deck:
+#         deck.remove(card)
+#         matches.append(card)
+#     else:
+#         only_canon.append(card)
+# only_deck = deck
+# 
+# print("\tmatches:")
+# for card in matches:
+#     print("\t", card_db[card])
+# 
+# print("only in canon:")
+# for card in only_canon:
+#     print(card_db[card])
+# 
+# print("\t\tonly in my deck:")
+# for card in only_deck:
+#     print("\t\t", card_db[card])

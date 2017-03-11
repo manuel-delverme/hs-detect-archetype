@@ -361,9 +361,9 @@ class DeckClassifier(object):
                         # penalize spells
                         mana_curve[card.cost] += most_significant[card_dim] / 3
                     deck_value += most_significant[card_dim]
-                    archetype_report += "{} {}\t".format(card, int(100 * most_significant[card_dim]) / 100.)
+                    archetype_report += "{} {}\t".format(card.name, int(100 * most_significant[card_dim]) / 100.)
                     # self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
-                    canonical_decks[klass][archetype_index].append(card)
+                    canonical_decks[klass][archetype_index].append(card.name)
                 archetype_report += "\n"
 
                 earliness_ratio = sum(mana_curve[0:3]) / (0.01 + sum(mana_curve[3:]))

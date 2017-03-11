@@ -1,10 +1,11 @@
 import json
+import numpy as np
 
 from flask import Flask
 from flask_restful import Resource, Api
 from flask import request
 
-from detect_archetype import DeckClassifier
+from detect_archetype import DeckClassifier, vectorizer_1hot
 
 
 class DeckClassifierAPI(Resource):
@@ -17,8 +18,8 @@ class DeckClassifierAPI(Resource):
         deck = json.loads(request.form['deck'])
         klass = request.form['klass']
 
-        canonical_deck = self.classifier.classify(deck, klass)
-        return (canonical_deck), 201
+        archetype_deck, prob = self.classifier.classify(deck, klass)
+        return (archetype_deck, (prob*100).transpose().tolist()[0]), 201
 
 
 class DeckClassifierWrapper(object):
@@ -30,37 +31,20 @@ class DeckClassifierWrapper(object):
         classifier_api = DeckClassifierAPI.make_api(self)
         app_api.add_resource(classifier_api, "/")  # "/api/v0.1/detect_archetype")
 
-        # train_data_path = "datasets/Deck_List_Training_Data.csv"
-        kara_data = "datasets/kara_data.json"
-
-        print("classifier dataset")
-        classifier = DeckClassifier()
-        loaded_data, popular_decks, semi_popular_decks = classifier.load_decks_from_json_file(kara_data)
-        self.classifier.fit_transform(loaded_data, popular_decks, semi_popular_decks)
+        model_path = "models/kara_classifier_state"
+        print("loading model")
+        self.classifier = DeckClassifier()
+        self.classifier.load_state_from_file(model_path)
+        print("calc canonical decks [REMOVEME]")
         self.classifier.calculate_canonical_decks()
         print("done")
 
-        # decks = self.classifier.load_decks_from_file(dataset_path)
+    def classify(self, deck, klass):
         # klass = int(''.join(filter(str.isdigit, klass)))
         # hero_to_class = ['UNKNOWN', 'WARRIOR', 'SHAMAN', 'ROGUE', 'PALADIN', 'HUNTER', 'DRUID', 'WARLOCK', 'MAGE', 'PRIEST']
         # klass = hero_to_class[klass]
-        # results = []
-        # for deck in klass_decks:
-        #     predicted_deck, prob = classifier.predict_update(deck, klass)
-        #     archetype_number = prob.argmax()
-        #     results_writer.writerow([archetype_number] + deck)
-
-    def classify(self, deck, klass):
-        print("eval ", klass, deck)
-        """
-        klass = int(''.join(filter(str.isdigit, klass)))
-        hero_to_class = ['UNKNOWN', 'WARRIOR', 'SHAMAN', 'ROGUE', 'PALADIN', 'HUNTER', 'DRUID', 'WARLOCK', 'MAGE', 'PRIEST']
-        klass = hero_to_class[klass]
-        predicted_deck, prob = self.classifier.predict(deck, klass)
-        archetype_number = prob.argmax()
-        canonical_deck = self.classifier.canonical_decks[archetype_number]
-        return canonical_deck
-        """
+        predicted_deck_report, prob = self.classifier.predict(deck, klass.upper())
+        return predicted_deck_report, prob / np.sum(prob)
 
     def run(self):
         self.app.run(host="0.0.0.0", port=31337)
