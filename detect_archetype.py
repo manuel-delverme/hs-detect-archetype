@@ -326,93 +326,96 @@ class DeckClassifier(object):
             except AttributeError:
                 pArchetype_Card = archetype_classifier["components_"]
 
-            threshold = 0.50
-            canonical_decks[klass] = []
-            archetype_data[klass] = {}
-
-            for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
-                archetype_data[klass][archetype_index] = {}
-                deck_name = ""
-                archetype_report = ""
-
-                canonical_decks[klass].append([])
-                normaliz_prob = archetype_card_dist / archetype_card_dist.max()
-                most_significant_indixes = np.where(normaliz_prob > threshold)[0]
-                most_significant_weights = archetype_card_dist[most_significant_indixes]
-                # archetype_card_ids = np.argsort(most_significant_cards)  # archetype_card_dist)
-                most_significant = dict(zip(most_significant_indixes, most_significant_weights))
-                for card_dim in most_significant:
-                    card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
-                    card = self.card_db[card_id]
-                # most_significant[card_dim] /= card.max_count_in_deck  # TODO: this should have been normalized already!!!!!!!
-
-                top_card_dims = sorted(most_significant, key=most_significant.get, reverse=True)
-                deck_value = 0
-                mana_curve = [0 for _ in range(31)]
-                race_dist = defaultdict(int)
-                for card_dim in top_card_dims:
-                    card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
-                    card = self.card_db[card_id]
-                    if card.health > 0:
-                        mana_curve[card.cost] += most_significant[card_dim]
-                        if card.race:
-                            race_dist[card.race] += most_significant[card_dim]
-                    else:
-                        # penalize spells
-                        mana_curve[card.cost] += most_significant[card_dim] / 3
-                    deck_value += most_significant[card_dim]
-                    archetype_report += "{} {}\t".format(card.name, int(100 * most_significant[card_dim]) / 100.)
-                    # self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
-                    canonical_decks[klass][archetype_index].append(card.name)
-                archetype_report += "\n"
-
-                earliness_ratio = sum(mana_curve[0:3]) / (0.01 + sum(mana_curve[3:]))
-                if earliness_ratio > 2:
-                    deck_name += "Aggro ({}) ".format(earliness_ratio)
-                elif earliness_ratio > 0.5:
-                    deck_name += "Tempo ({}) ".format(earliness_ratio)
-                elif earliness_ratio == 0:
-                    pass
-                else:
-                    deck_name += "Control ({}) ".format(earliness_ratio)
-
-                mvp_id = self.classifier_state['vectorizer'].invert(klass, top_card_dims[0])
-                mvp = self.card_db[mvp_id].name
-                if race_dist:
-                    race_dist_ladder = sorted(race_dist, key=race_dist.get, reverse=True)
-                    best_race = race_dist_ladder[0]
-                    best_race_score = race_dist[race_dist_ladder[0]]
-                    other_races_score = deck_value - best_race_score
-                    if other_races_score != 0:
-                        if best_race_score / other_races_score > 0.3:
-                            # one race dominates
-                            mvp = str(best_race)
-                        mvp += " ({})".format(best_race_score / other_races_score)
-                else:
-                    mvp += " ({})".format(most_significant[top_card_dims[0]])
-
-                deck_name += "\"{0}\" ".format(mvp)
-                deck_name += klass.lower()
-                archetype_report += "deck name: {0}\n".format(deck_name)
-                archetype_report += "deck value:{0}\n".format(int(deck_value))
-                archetype_report += "\n"
-                archetype_data[klass][archetype_index]['value'] = deck_value
-                archetype_data[klass][archetype_index]['report'] = archetype_report
-
-            vals = sorted([arch['value'] for arch in archetype_data[klass].values()])
-
-            while archetype_data[klass]:
-                max_val = vals.pop()
-                for idx, arch in archetype_data[klass].items():
-                    if arch['value'] == max_val:
-                        print("topic {}:".format(idx))
-                        print(arch['report'])
-                        canonical_decks[klass][idx].append(arch['report'])
-                        del archetype_data[klass][idx]
-                        break
-
+            canonical_decks[klass], archetype_data[klass] = tag_archetype(pArchetype_Card, klass)
         self.classifier_state['canonical_decks'] = canonical_decks
         return canonical_decks
+
+    def tag_archetype(self, pArchetype_Card, klass):
+        threshold = 0.50
+        canonical_decks = []
+        archetype_data = {}
+
+        for archetype_index, archetype_card_dist in enumerate(pArchetype_Card):
+            archetype_data[archetype_index] = {}
+            deck_name = ""
+            archetype_report = ""
+
+            canonical_decks.append([])
+            normaliz_prob = archetype_card_dist / archetype_card_dist.max()
+            most_significant_indixes = np.where(normaliz_prob > threshold)[0]
+            most_significant_weights = archetype_card_dist[most_significant_indixes]
+            # archetype_card_ids = np.argsort(most_significant_cards)  # archetype_card_dist)
+            most_significant = dict(zip(most_significant_indixes, most_significant_weights))
+            for card_dim in most_significant:
+                card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
+                card = self.card_db[card_id]
+            # most_significant[card_dim] /= card.max_count_in_deck  # TODO: this should have been normalized already!!!!!!!
+
+            top_card_dims = sorted(most_significant, key=most_significant.get, reverse=True)
+            deck_value = 0
+            mana_curve = [0 for _ in range(31)]
+            race_dist = defaultdict(int)
+            for card_dim in top_card_dims:
+                card_id = self.classifier_state['vectorizer'].invert(klass, card_dim)
+                card = self.card_db[card_id]
+                if card.health > 0:
+                    mana_curve[card.cost] += most_significant[card_dim]
+                    if card.race:
+                        race_dist[card.race] += most_significant[card_dim]
+                else:
+                    # penalize spells
+                    mana_curve[card.cost] += most_significant[card_dim] / 3
+                deck_value += most_significant[card_dim]
+                archetype_report += "{} {}\t".format(card.name, int(100 * most_significant[card_dim]) / 100.)
+                # self.classifier_state['canonical_decks'][klass][archetype_index].append(card_title)
+                canonical_decks[klass][archetype_index].append(card.name)
+            archetype_report += "\n"
+
+            earliness_ratio = sum(mana_curve[0:3]) / (0.01 + sum(mana_curve[3:]))
+            if earliness_ratio > 2:
+                deck_name += "Aggro ({}) ".format(earliness_ratio)
+            elif earliness_ratio > 0.5:
+                deck_name += "Tempo ({}) ".format(earliness_ratio)
+            elif earliness_ratio == 0:
+                pass
+            else:
+                deck_name += "Control ({}) ".format(earliness_ratio)
+
+            mvp_id = self.classifier_state['vectorizer'].invert(klass, top_card_dims[0])
+            mvp = self.card_db[mvp_id].name
+            if race_dist:
+                race_dist_ladder = sorted(race_dist, key=race_dist.get, reverse=True)
+                best_race = race_dist_ladder[0]
+                best_race_score = race_dist[race_dist_ladder[0]]
+                other_races_score = deck_value - best_race_score
+                if other_races_score != 0:
+                    if best_race_score / other_races_score > 0.3:
+                        # one race dominates
+                        mvp = str(best_race)
+                    mvp += " ({})".format(best_race_score / other_races_score)
+            else:
+                mvp += " ({})".format(most_significant[top_card_dims[0]])
+
+            deck_name += "\"{0}\" ".format(mvp)
+            deck_name += klass.lower()
+            archetype_report += "deck name: {0}\n".format(deck_name)
+            archetype_report += "deck value:{0}\n".format(int(deck_value))
+            archetype_report += "\n"
+            archetype_data[klass][archetype_index]['value'] = deck_value
+            archetype_data[klass][archetype_index]['report'] = archetype_report
+
+        vals = sorted([arch['value'] for arch in archetype_data[klass].values()])
+
+        while archetype_data[klass]:
+            max_val = vals.pop()
+            for idx, arch in archetype_data[klass].items():
+                if arch['value'] == max_val:
+                    print("topic {}:".format(idx))
+                    print(arch['report'])
+                    canonical_decks[klass][idx].append(arch['report'])
+                    del archetype_data[klass][idx]
+                    break
+
 
     # takes a file, returns decks
     def load_decks_from_json_file(self, file_name):
