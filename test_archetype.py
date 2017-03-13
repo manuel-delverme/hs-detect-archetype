@@ -5,16 +5,38 @@ from fireplace import cards
 from hearthstone.enums import CardClass
 from hearthstone import cardxml
 
+
+# import requests
+# import logging
+# 
+# # Enabling debugging at http.client level (requests->urllib3->http.client)
+# # you will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
+# # the only thing missing will be the response.body which is not logged.
+# try: # for Python 3
+#     from http.client import HTTPConnection
+# except ImportError:
+#         from httplib import HTTPConnection
+# HTTPConnection.debuglevel = 1
+# 
+# logging.basicConfig() # you need to initialize logging, otherwise you will not see anything from requests
+# logging.getLogger().setLevel(logging.DEBUG)
+# requests_log = logging.getLogger("requests.packages.urllib3")
+# requests_log.setLevel(logging.DEBUG)
+# requests_log.propagate = True
+
 def classify(y, x):
     for klass_name in ["ROGUE", "MAGE", "WARRIOR", "HUNTER", "PRIEST", "PALADIN", "WARLOCK", "SHAMAN", "DRUID"]:
         if klass_name.lower() in y.lower():
             klass = klass_name
-    resp = requests.post('http://88.99.185.31:31337', data={'deck': json.dumps(x), 'klass': klass})
+    hostname = 'http://88.99.185.31:80'
+    resp = requests.post(hostname, data={'deck': json.dumps(x), 'klass': klass})
     try:
-        deck, probs = json.loads(resp.text)
-    except:
+        deck, probs, ignored_cards = json.loads(resp.text)
+    except Exception as e:
         print(resp.text)
-    return deck, probs
+        raise e
+    else:
+        return deck, probs, ignored_cards
 
 def names_to_ids(name_to_id, names):
     ids = []
@@ -66,43 +88,17 @@ def main():
     for test_point in test_set:
         y, x = test_point
         if y != "UNKNOWN":
-            print("sending", y)
+            print("[SENDING]", y)
             # print("sending", y, sorted(set(x)))
-            report, probs = classify(y, names_to_ids(name_to_id, x))
-            print("confidences", probs)
-            print("canonical deck:")
+            report, probs, ignored_cards = classify(y, names_to_ids(name_to_id, x))
+            if ignored_cards > 0:
+                print(ignored_cards, "[WARNING] WERE IGNORED WHILE CLASSIFYING")
+            print("classifier confidences", probs)
+            print("[ANSWER]")
             for k,v in report.items():
                 print(k, ":",  v)
             # for row in report: print(row)
             input()
-
-"""
-# deck = random_draft(CardClass.WARRIOR)
-# deck = sorted(deck)
-
-# matches = []
-# only_canon = []
-# only_deck = []
-# for card in canon_deck:
-#     if card in deck:
-#         deck.remove(card)
-#         matches.append(card)
-#     else:
-#         only_canon.append(card)
-# only_deck = deck
-# 
-# print("\tmatches:")
-# for card in matches:
-#     print("\t", card_db[card])
-# 
-# print("only in canon:")
-# for card in only_canon:
-#     print(card_db[card])
-# 
-# print("\t\tonly in my deck:")
-# for card in only_deck:
-#     print("\t\t", card_db[card])
-"""
 
 try:
     firstRun

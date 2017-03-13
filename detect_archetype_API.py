@@ -18,8 +18,8 @@ class DeckClassifierAPI(Resource):
         deck = json.loads(request.form['deck'])
         klass = request.form['klass']
 
-        archetype_deck, prob = self.classifier.classify(deck, klass)
-        return (archetype_deck, (prob*100).transpose().tolist()[0]), 201
+        archetype_deck, prob, ignored_cards = self.classifier.classify(deck, klass)
+        return (archetype_deck, (prob*100).transpose().tolist()[0], ignored_cards), 201
 
 
 class DeckClassifierWrapper(object):
@@ -43,8 +43,8 @@ class DeckClassifierWrapper(object):
         # klass = int(''.join(filter(str.isdigit, klass)))
         # hero_to_class = ['UNKNOWN', 'WARRIOR', 'SHAMAN', 'ROGUE', 'PALADIN', 'HUNTER', 'DRUID', 'WARLOCK', 'MAGE', 'PRIEST']
         # klass = hero_to_class[klass]
-        predicted_deck_report, prob = self.classifier.predict(deck, klass.upper())
-        return predicted_deck_report, prob / np.sum(prob)
+        predicted_deck_report, prob, ignored_cards = self.classifier.predict(deck, klass.upper())
+        return predicted_deck_report, prob / np.sum(prob), ignored_cards
 
     def run(self):
         self.app.run(host="0.0.0.0", port=31337)

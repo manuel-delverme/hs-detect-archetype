@@ -25,7 +25,7 @@ class vectorizer_1hot(object):
     def invert(self, klass: str, card_dim: int) -> np.ndarray:
         return self.dimension_to_card_name[klass][card_dim]
 
-    def transform(self, klass: str, decks: list) -> np.ndarray:
+    def transform(self, klass: str, decks: list, return_missing=False) -> np.ndarray:
         klass_data = []
         ignored_cards = 0
         for deck in decks:
@@ -45,10 +45,14 @@ class vectorizer_1hot(object):
         data = np.array(klass_data)
         if ignored_cards > 0:
             print("[{}] {} cards were ignored when vectorizing".format(klass, ignored_cards))
+
         if len(data.shape) == 1:
-            return data.reshape(1, -1)
-        else:
-            return data
+            data = data.reshape(1, -1)
+
+        if return_missing:
+            data = (data, ignored_cards)
+
+        return data
 
 
 class DeckClassifier(object):
@@ -158,7 +162,7 @@ class DeckClassifier(object):
             a list of cards (archetype), confidence scores for the various class archetypes
 
         """
-        x = self.classifier_state['vectorizer'].transform(klass, [deck])
+        x, ignored_cards = self.classifier_state['vectorizer'].transform(klass, [deck], return_missing=True)
         archetype_classifier = self.classifier_state['classifier'][klass]
         try:
             pArchetype_Card = archetype_classifier.components_
@@ -168,7 +172,7 @@ class DeckClassifier(object):
 
         index = confidence.argmax()
         canonical_deck = self.classifier_state['canonical_decks'][klass][index]
-        return canonical_deck, confidence
+        return canonical_deck, confidence, ignored_cards
 
     @staticmethod
     def load_decks_from_file(file_name: str) -> (dict, list):
